@@ -264,25 +264,55 @@ def login_officer(payload: LoginRequest) -> dict[str, Any]:
 
 
 def parse_uploaded_dataset(file_bytes: bytes, filename: str | None) -> pd.DataFrame:
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
     suffix = Path(filename or "").suffix.lower()
 
-    if suffix == ".csv":
-        try:
-            return pd.read_csv(BytesIO(file_bytes))
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail="Invalid CSV file") from exc
-
+    # 1) Try Excel auto-detection first (handles modern .xlsx and some legacy files).
     try:
-        return pd.read_excel(BytesIO(file_bytes), engine="openpyxl")
-    except Exception as excel_exc:
-        # Some users rename CSV files with spreadsheet extensions.
+        return pd.read_excel(BytesIO(file_bytes))
+    except Exception:
+        pass
+
+    # 2) Explicit engines for known spreadsheet formats.
+    if suffix in {".xlsx", ".xlsm", ".xltx", ".xltm", ""}:
         try:
-            return pd.read_csv(BytesIO(file_bytes))
+            return pd.read_excel(BytesIO(file_bytes), engine="openpyxl")
         except Exception:
+            pass
+
+    if suffix == ".xls":
+        try:
+            return pd.read_excel(BytesIO(file_bytes), engine="xlrd")
+        except ImportError as exc:
             raise HTTPException(
-                status_code=400,
-                detail="Unable to parse uploaded file. Please upload a valid .xlsx or .csv dataset.",
-            ) from excel_exc
+                status_code=500,
+                detail="Legacy .xls upload requires xlrd. Install backend dependencies from requirements.txt.",
+            ) from exc
+        except Exception:
+            pass
+
+    # 3) Fallback to CSV parsing with delimiter + encoding tolerance.
+    csv_attempts: list[dict[str, Any]] = [
+        {"encoding": "utf-8-sig", "sep": None, "engine": "python"},
+        {"encoding": "utf-8", "sep": None, "engine": "python"},
+        {"encoding": "latin1", "sep": None, "engine": "python"},
+        {"encoding": "utf-8-sig", "sep": ",", "engine": "python"},
+        {"encoding": "utf-8-sig", "sep": ";", "engine": "python"},
+        {"encoding": "utf-8-sig", "sep": "	", "engine": "python"},
+    ]
+
+    for kwargs in csv_attempts:
+        try:
+            return pd.read_csv(BytesIO(file_bytes), **kwargs)
+        except Exception:
+            continue
+
+    raise HTTPException(
+        status_code=400,
+        detail="Unable to parse uploaded file. Supported formats: .xlsx, .xls, .csv (comma/semicolon/tab delimited).",
+    )
 
 
 @app.post("/upload")
