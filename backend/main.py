@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import os
+from io import BytesIO
+from pathlib import Path
 import random
 from typing import Any
 
@@ -8,7 +9,7 @@ import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="DhanSuraksha API", version="1.1.0")
+app = FastAPI(title="DhanSuraksha API", version="1.1.1")
 
 app.add_middleware(
     CORSMiddleware,
@@ -18,7 +19,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DATA_PATH = "data/dataset.xlsx"
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = Path("data")
+if not DATA_DIR.is_absolute():
+    DATA_DIR = BASE_DIR / DATA_DIR
+DATA_PATH = DATA_DIR / "dataset.xlsx"
 
 current_df: pd.DataFrame | None = None
 summary_cache: dict[str, Any] | None = None
@@ -107,10 +112,10 @@ def analyze_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Any]]:
     return df, {"summary": summary, "transactions": transactions}
 
 
-def load_dataset_from_disk(path: str = DATA_PATH) -> None:
+def load_dataset_from_disk(path: Path = DATA_PATH) -> None:
     global current_df, summary_cache
 
-    if not os.path.exists(path):
+    if not path.exists():
         return
 
     df = pd.read_excel(path)
@@ -120,7 +125,7 @@ def load_dataset_from_disk(path: str = DATA_PATH) -> None:
 
 @app.on_event("startup")
 def startup_event() -> None:
-    os.makedirs("data", exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     try:
         load_dataset_from_disk(DATA_PATH)
     except Exception:
@@ -137,17 +142,25 @@ def health_check() -> dict[str, str]:
 async def upload_excel(file: UploadFile = File(...)) -> dict[str, Any]:
     global current_df, summary_cache
 
-    os.makedirs("data", exist_ok=True)
-    with open(DATA_PATH, "wb") as f:
-        f.write(await file.read())
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    file_bytes = await file.read()
 
     try:
-        df = pd.read_excel(DATA_PATH)
+        # Parse in-memory first so upload works even when dataset file path is locked/read-only.
+        df = pd.read_excel(BytesIO(file_bytes))
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Invalid Excel file") from exc
 
     df = clean_data(df)
     current_df, summary_cache = analyze_dataframe(df)
+
+    # Best-effort persistence for startup cache. Do not fail request on write-permission issues.
+    try:
+        DATA_PATH.write_bytes(file_bytes)
+    except PermissionError:
+        pass
+    except OSError:
+        pass
 
     return {"message": "Dataset uploaded successfully", "summary": summary_cache}
 
