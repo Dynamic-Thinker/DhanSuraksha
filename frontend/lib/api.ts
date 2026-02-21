@@ -33,6 +33,8 @@ export interface BackendClaim {
   Last_Claim_Date?: string
   region_code?: string
   Region_Code?: string
+  income_tier?: string
+  Income_Tier?: string
   [key: string]: unknown
 }
 
@@ -109,6 +111,8 @@ export function mapBackendClaimToTransaction(claim: BackendClaim, index: number)
   const accountStatus = String(claim.account_status ?? claim.Account_Status ?? "").toUpperCase()
   const scheme = String(claim.scheme_eligibility ?? claim.Scheme_Eligibility ?? "Welfare Scheme")
   const regionCode = String(claim.region_code ?? claim.Region_Code ?? "UNKNOWN").toUpperCase()
+  const incomeTierRaw = String(claim.income_tier ?? claim.Income_Tier ?? "MEDIUM").toUpperCase()
+  const incomeTier = incomeTierRaw === "LOW" || incomeTierRaw === "HIGH" ? incomeTierRaw : "MEDIUM"
   const rawTimestamp = String(claim.last_claim_date ?? claim.Last_Claim_Date ?? "")
   const timestamp = parseClaimDate(rawTimestamp)
 
@@ -117,6 +121,7 @@ export function mapBackendClaimToTransaction(claim: BackendClaim, index: number)
     citizenHash: citizenId,
     scheme,
     regionCode,
+    incomeTier,
     amount: Number.isFinite(amount) ? amount : 0,
     riskScore: Number.isFinite(riskScore) ? riskScore : 0,
     timestamp,

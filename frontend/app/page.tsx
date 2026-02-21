@@ -95,6 +95,9 @@ export default function LoginPage() {
             <p className="mt-4 text-center text-sm text-muted-foreground">
               New officer? <Link href="/register" className="font-medium text-primary hover:underline">Register</Link>
             </p>
+            <p className="mt-2 text-center text-sm text-muted-foreground">
+              Citizen access? <Link href="/citizen" className="font-medium text-primary hover:underline">Open Citizen Portal</Link>
+            </p>
           </CardContent>
         </Card>
       </div>
