@@ -89,7 +89,7 @@ export default function DatasetUploadPage() {
       <Card>
         <CardHeader>
           <CardTitle>Upload Registry Excel</CardTitle>
-          <CardDescription>Upload .xlsx dataset</CardDescription>
+          <CardDescription>Upload .xlsx, .xls, or .csv dataset</CardDescription>
         </CardHeader>
 
         <CardContent>
@@ -106,8 +106,8 @@ export default function DatasetUploadPage() {
               onDrop={handleDrop}
             >
               <Upload className="size-6" />
-              Drop Excel File
-              <input type="file" accept=".xlsx,.xls" className="sr-only" onChange={handleFileInput} />
+              Drop dataset file (.xlsx/.xls/.csv)
+              <input type="file" accept=".xlsx,.xls,.csv,text/csv" className="sr-only" onChange={handleFileInput} />
             </label>
           ) : (
             <div className="py-6">
