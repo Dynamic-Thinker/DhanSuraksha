@@ -40,6 +40,8 @@ Set optional env var to point frontend to backend:
 NEXT_PUBLIC_API=http://127.0.0.1:8000
 ```
 
+By default, frontend uses a same-origin `/api` proxy to avoid browser CORS/mixed-content failures. In custom deployments, set `BACKEND_URL` (for Next.js server proxy) and/or `NEXT_PUBLIC_API` (direct client calls).
+
 ## Production checks
 ```bash
 python -m py_compile backend/main.py backend/fraud_engine.py backend/services/cleaner.py backend/services/analyzer.py

@@ -18,6 +18,7 @@ export default function DatasetUploadPage() {
   const [uploadProgress, setUploadProgress] = useState(0)
   const [fileName, setFileName] = useState("")
   const [uploadComplete, setUploadComplete] = useState(false)
+  const [errorMessage, setErrorMessage] = useState("")
 
   useEffect(() => {
     if (uploadComplete && datasetLoaded) {
@@ -31,6 +32,7 @@ export default function DatasetUploadPage() {
       setFileName(file.name)
       setUploading(true)
       setUploadProgress(20)
+      setErrorMessage("")
 
       try {
         await uploadDataset(file)
@@ -44,7 +46,7 @@ export default function DatasetUploadPage() {
         setUploadComplete(true)
       } catch (error) {
         console.error(error)
-        alert(error instanceof Error ? error.message : "Upload failed. Check backend.")
+        setErrorMessage(error instanceof Error ? error.message : "Upload failed. Check backend.")
       } finally {
         setUploading(false)
       }
@@ -111,6 +113,12 @@ export default function DatasetUploadPage() {
             <div className="py-6">
               <FileSpreadsheet className="mx-auto size-10 text-primary" />
               <Progress value={uploadProgress} className="mt-4" />
+            </div>
+          )}
+
+          {errorMessage && (
+            <div className="mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
+              <p className="text-sm text-destructive">{errorMessage}</p>
             </div>
           )}
         </CardContent>

@@ -28,7 +28,19 @@ export interface BackendClaim {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE_URL}${path}`, init)
+  let res: Response
+
+  try {
+    res = await fetch(`${API_BASE_URL}${path}`, init)
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error(
+        "Unable to connect to backend API. Start backend server on port 8000 or set NEXT_PUBLIC_API in frontend/.env.local."
+      )
+    }
+    throw error
+  }
+
   const payload = await res.json().catch(() => ({}))
 
   if (!res.ok) {
