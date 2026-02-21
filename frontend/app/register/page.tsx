@@ -10,18 +10,20 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Shield, Eye, EyeOff, Check, X } from "lucide-react"
 import Link from "next/link"
 
+const DEPARTMENTS = ["Pension", "Food", "Health"]
+
 export default function RegisterPage() {
   const [name, setName] = useState("")
-  const [department, setDepartment] = useState("")
+  const [department, setDepartment] = useState(DEPARTMENTS[0])
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState("")
+  const [loading, setLoading] = useState(false)
   const { register, isAuthenticated, hydrated } = useApp()
   const router = useRouter()
 
-  // If already authenticated, redirect away
   useEffect(() => {
     if (hydrated && isAuthenticated) {
       router.replace("/mode-select")
@@ -35,10 +37,10 @@ export default function RegisterPage() {
     { label: "Passwords match", valid: password.length > 0 && password === confirmPassword },
   ]
 
-  function handleRegister(e: React.FormEvent) {
+  async function handleRegister(e: React.FormEvent) {
     e.preventDefault()
     setError("")
-    if (!name.trim() || !department.trim() || !email.trim() || !password || !confirmPassword) {
+    if (!name.trim() || !department || !email.trim() || !password || !confirmPassword) {
       setError("Please fill in all fields")
       return
     }
@@ -50,27 +52,27 @@ export default function RegisterPage() {
       setError("Password must be at least 8 characters")
       return
     }
-    const success = register({ name: name.trim(), department: department.trim(), email: email.trim(), password })
-    if (success) {
-      // Auto-login and redirect to mode selection
+
+    setLoading(true)
+    const result = await register({ name: name.trim(), department, email: email.trim(), password })
+    setLoading(false)
+
+    if (result.ok) {
       router.push("/mode-select")
+    } else {
+      setError(result.error || "Registration failed")
     }
   }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4 py-10">
       <div className="w-full max-w-md">
-        {/* Branding */}
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex size-14 items-center justify-center rounded-lg bg-primary/10 border border-primary/20">
             <Shield className="size-7 text-primary" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground text-balance">
-            JAN-DHANRAKSHA
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Create your officer account
-          </p>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground text-balance">JAN-DHANRAKSHA</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Create your officer account</p>
         </div>
 
         <Card className="border-border shadow-sm">
@@ -82,23 +84,23 @@ export default function RegisterPage() {
             <form onSubmit={handleRegister} className="flex flex-col gap-4">
               <div className="flex flex-col gap-2">
                 <Label htmlFor="name">Full Name</Label>
-                <Input
-                  id="name"
-                  placeholder="Rajesh Kumar"
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  autoComplete="name"
-                />
+                <Input id="name" placeholder="Rajesh Kumar" value={name} onChange={e => setName(e.target.value)} autoComplete="name" />
               </div>
 
               <div className="flex flex-col gap-2">
                 <Label htmlFor="department">Department / Organization</Label>
-                <Input
+                <select
                   id="department"
-                  placeholder="Ministry of Finance"
                   value={department}
                   onChange={e => setDepartment(e.target.value)}
-                />
+                  className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-sm"
+                >
+                  {DEPARTMENTS.map(dep => (
+                    <option key={dep} value={dep}>
+                      {dep}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="flex flex-col gap-2">
@@ -148,39 +150,24 @@ export default function RegisterPage() {
                 />
               </div>
 
-              {/* Validation indicators */}
               <div className="flex flex-col gap-1.5">
                 {validations.map(v => (
                   <div key={v.label} className="flex items-center gap-2 text-xs">
-                    {v.valid ? (
-                      <Check className="size-3.5 text-success" />
-                    ) : (
-                      <X className="size-3.5 text-muted-foreground/40" />
-                    )}
-                    <span className={v.valid ? "text-success" : "text-muted-foreground"}>
-                      {v.label}
-                    </span>
+                    {v.valid ? <Check className="size-3.5 text-success" /> : <X className="size-3.5 text-muted-foreground/40" />}
+                    <span className={v.valid ? "text-success" : "text-muted-foreground"}>{v.label}</span>
                   </div>
                 ))}
               </div>
 
-              {error && (
-                <p className="text-sm text-destructive">{error}</p>
-              )}
+              {error && <p className="text-sm text-destructive">{error}</p>}
 
-              <Button type="submit" className="w-full">
-                Create Account
+              <Button type="submit" className="w-full" disabled={loading}>
+                {loading ? "Creating Account..." : "Create Account"}
               </Button>
             </form>
 
             <p className="mt-4 text-center text-sm text-muted-foreground">
-              Already have an account?{" "}
-              <Link
-                href="/"
-                className="font-medium text-primary hover:underline"
-              >
-                Sign In
-              </Link>
+              Already have an account? <Link href="/" className="font-medium text-primary hover:underline">Sign In</Link>
             </p>
           </CardContent>
         </Card>

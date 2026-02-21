@@ -1,6 +1,7 @@
 "use client"
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from "react"
+import { loginOfficer, registerOfficer } from "@/lib/api"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 export type SystemStatus = "ACTIVE" | "PAUSED" | "FROZEN"
@@ -42,8 +43,8 @@ export interface AppState {
 }
 
 interface AppContextType extends AppState {
-  login: (email: string, password: string) => boolean
-  register: (user: Omit<User, "role"> & { password: string }) => boolean
+  login: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>
+  register: (user: Omit<User, "role"> & { password: string }) => Promise<{ ok: boolean; error?: string }>
   logout: () => void
   setMode: (mode: AppMode) => void
   loadDataset: (data: Transaction[]) => void
@@ -229,26 +230,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     ? Math.round(transactions.reduce((sum, t) => sum + t.riskScore, 0) / transactions.length)
     : 0
 
-  const login = useCallback((email: string, _password: string): boolean => {
-    setUser({
-      name: email.split("@")[0].replace(/[._]/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
-      email,
-      role: "Welfare Audit Officer",
-      department: "Ministry of Finance",
-    })
-    setIsAuthenticated(true)
-    return true
+  const login = useCallback(async (email: string, password: string): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const result = await loginOfficer(email, password)
+      setUser(result.user)
+      setIsAuthenticated(true)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Login failed" }
+    }
   }, [])
 
-  const register = useCallback((data: Omit<User, "role"> & { password: string }): boolean => {
-    setUser({
-      name: data.name,
-      email: data.email,
-      role: "Welfare Audit Officer",
-      department: data.department,
-    })
-    setIsAuthenticated(true)
-    return true
+  const register = useCallback(async (data: Omit<User, "role"> & { password: string }): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const result = await registerOfficer({
+        name: data.name,
+        email: data.email,
+        department: data.department,
+        password: data.password,
+      })
+      setUser(result.user)
+      setIsAuthenticated(true)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Registration failed" }
+    }
   }, [])
 
   const logout = useCallback(() => {

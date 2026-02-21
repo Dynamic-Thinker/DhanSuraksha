@@ -2,14 +2,18 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
+import hashlib
 import random
+import secrets
+import sqlite3
 from typing import Any
 
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
-app = FastAPI(title="DhanSuraksha API", version="1.1.1")
+app = FastAPI(title="DhanSuraksha API", version="1.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,6 +28,23 @@ DATA_DIR = Path("data")
 if not DATA_DIR.is_absolute():
     DATA_DIR = BASE_DIR / DATA_DIR
 DATA_PATH = DATA_DIR / "dataset.xlsx"
+AUTH_DB_PATH = DATA_DIR / "auth.db"
+
+ALLOWED_DEPARTMENTS = {"Pension", "Food", "Health"}
+OFFICER_ROLE = "Welfare Audit Officer"
+
+
+class RegisterRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+    department: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
 
 current_df: pd.DataFrame | None = None
 summary_cache: dict[str, Any] | None = None
@@ -42,6 +63,47 @@ COLUMN_ALIASES = {
     "amount": "scheme_amount",
     "scheme eligibility": "scheme_eligibility",
 }
+
+
+def get_db_connection() -> sqlite3.Connection:
+    connection = sqlite3.connect(AUTH_DB_PATH)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def init_auth_db() -> None:
+    with get_db_connection() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS officers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                department TEXT NOT NULL,
+                role TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        connection.commit()
+
+
+def hash_password(password: str, salt: str | None = None) -> str:
+    effective_salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), effective_salt.encode("utf-8"), 120000)
+    return f"{effective_salt}${digest.hex()}"
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        salt, digest_hex = stored_hash.split("$", 1)
+    except ValueError:
+        return False
+
+    candidate = hash_password(password, salt)
+    _, candidate_digest = candidate.split("$", 1)
+    return secrets.compare_digest(candidate_digest, digest_hex)
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -126,16 +188,79 @@ def load_dataset_from_disk(path: Path = DATA_PATH) -> None:
 @app.on_event("startup")
 def startup_event() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    init_auth_db()
+
     try:
         load_dataset_from_disk(DATA_PATH)
     except Exception:
-        # Keep startup resilient; users can re-upload a fresh file.
         pass
 
 
 @app.get("/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/auth/register")
+def register_officer(payload: RegisterRequest) -> dict[str, Any]:
+    name = payload.name.strip()
+    email = payload.email.strip().lower()
+    department = payload.department.strip()
+    password = payload.password
+
+    if not name or not email or not password:
+        raise HTTPException(status_code=400, detail="Name, email, and password are required")
+    if department not in ALLOWED_DEPARTMENTS:
+        raise HTTPException(status_code=400, detail=f"Department must be one of {sorted(ALLOWED_DEPARTMENTS)}")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    password_hash = hash_password(password)
+
+    try:
+        with get_db_connection() as connection:
+            connection.execute(
+                "INSERT INTO officers (name, email, password_hash, department, role) VALUES (?, ?, ?, ?, ?)",
+                (name, email, password_hash, department, OFFICER_ROLE),
+            )
+            connection.commit()
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="Officer with this email already exists") from exc
+
+    return {
+        "message": "Officer registered successfully",
+        "user": {
+            "name": name,
+            "email": email,
+            "department": department,
+            "role": OFFICER_ROLE,
+        },
+    }
+
+
+@app.post("/auth/login")
+def login_officer(payload: LoginRequest) -> dict[str, Any]:
+    email = payload.email.strip().lower()
+    password = payload.password
+
+    with get_db_connection() as connection:
+        row = connection.execute(
+            "SELECT name, email, department, role, password_hash FROM officers WHERE email = ?",
+            (email,),
+        ).fetchone()
+
+    if row is None or not verify_password(password, row["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    return {
+        "message": "Login successful",
+        "user": {
+            "name": row["name"],
+            "email": row["email"],
+            "department": row["department"],
+            "role": row["role"],
+        },
+    }
 
 
 @app.post("/upload")
@@ -146,7 +271,6 @@ async def upload_excel(file: UploadFile = File(...)) -> dict[str, Any]:
     file_bytes = await file.read()
 
     try:
-        # Parse in-memory first so upload works even when dataset file path is locked/read-only.
         df = pd.read_excel(BytesIO(file_bytes))
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Invalid Excel file") from exc
@@ -154,7 +278,6 @@ async def upload_excel(file: UploadFile = File(...)) -> dict[str, Any]:
     df = clean_data(df)
     current_df, summary_cache = analyze_dataframe(df)
 
-    # Best-effort persistence for startup cache. Do not fail request on write-permission issues.
     try:
         DATA_PATH.write_bytes(file_bytes)
     except PermissionError:

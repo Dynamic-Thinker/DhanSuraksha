@@ -53,3 +53,9 @@ cd frontend && npm run build
 - API URL is centralized in `frontend/lib/config.ts`.
 - Backend claim → UI transaction mapping is centralized in `frontend/lib/api.ts` (`mapBackendClaimToTransaction`).
 - Column aliasing and risk rules are centralized in `backend/main.py`.
+
+
+## Authentication
+- Officer accounts are stored in local SQLite at `backend/data/auth.db`.
+- Register and login endpoints: `POST /auth/register` and `POST /auth/login`.
+- Allowed departments during registration: `Pension`, `Food`, `Health`.

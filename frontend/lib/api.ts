@@ -1,5 +1,12 @@
 import { API_BASE_URL } from "@/lib/config"
 
+export interface AuthUser {
+  name: string
+  email: string
+  role: string
+  department: string
+}
+
 export interface DashboardSummary {
   total_transactions: number
   fraud_detected: number
@@ -51,6 +58,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return payload as T
+}
+
+export async function loginOfficer(email: string, password: string) {
+  return request<{ message: string; user: AuthUser }>("/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  })
+}
+
+export async function registerOfficer(data: {
+  name: string
+  email: string
+  department: string
+  password: string
+}) {
+  return request<{ message: string; user: AuthUser }>("/auth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  })
 }
 
 export function mapBackendClaimToTransaction(claim: BackendClaim, index: number) {

@@ -16,6 +16,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     if (hydrated && isAuthenticated) {
@@ -23,7 +24,7 @@ export default function LoginPage() {
     }
   }, [hydrated, isAuthenticated, router])
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError("")
 
@@ -32,11 +33,14 @@ export default function LoginPage() {
       return
     }
 
-    const ok = login(email.trim(), password)
-    if (ok) {
+    setLoading(true)
+    const result = await login(email.trim(), password)
+    setLoading(false)
+
+    if (result.ok) {
       router.push("/mode-select")
     } else {
-      setError("Invalid credentials")
+      setError(result.error || "Invalid credentials")
     }
   }
 
@@ -83,7 +87,9 @@ export default function LoginPage() {
                 />
               </div>
               {error && <p className="text-sm text-destructive">{error}</p>}
-              <Button type="submit" className="w-full">Sign In</Button>
+              <Button type="submit" className="w-full" disabled={loading}>
+                {loading ? "Signing In..." : "Sign In"}
+              </Button>
             </form>
 
             <p className="mt-4 text-center text-sm text-muted-foreground">
