@@ -263,6 +263,28 @@ def login_officer(payload: LoginRequest) -> dict[str, Any]:
     }
 
 
+def parse_uploaded_dataset(file_bytes: bytes, filename: str | None) -> pd.DataFrame:
+    suffix = Path(filename or "").suffix.lower()
+
+    if suffix == ".csv":
+        try:
+            return pd.read_csv(BytesIO(file_bytes))
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Invalid CSV file") from exc
+
+    try:
+        return pd.read_excel(BytesIO(file_bytes), engine="openpyxl")
+    except Exception as excel_exc:
+        # Some users rename CSV files with spreadsheet extensions.
+        try:
+            return pd.read_csv(BytesIO(file_bytes))
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail="Unable to parse uploaded file. Please upload a valid .xlsx or .csv dataset.",
+            ) from excel_exc
+
+
 @app.post("/upload")
 async def upload_excel(file: UploadFile = File(...)) -> dict[str, Any]:
     global current_df, summary_cache
@@ -270,11 +292,7 @@ async def upload_excel(file: UploadFile = File(...)) -> dict[str, Any]:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     file_bytes = await file.read()
 
-    try:
-        df = pd.read_excel(BytesIO(file_bytes))
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail="Invalid Excel file") from exc
-
+    df = parse_uploaded_dataset(file_bytes, file.filename)
     df = clean_data(df)
     current_df, summary_cache = analyze_dataframe(df)
 
