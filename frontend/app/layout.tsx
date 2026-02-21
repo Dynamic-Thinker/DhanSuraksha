@@ -1,11 +1,7 @@
 import type { Metadata, Viewport } from "next"
-import { Inter, JetBrains_Mono } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
 import { AppProvider } from "@/lib/app-context"
 import "./globals.css"
-
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter" })
-const jetbrains = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains" })
 
 export const metadata: Metadata = {
   title: "JAN-DHANRAKSHA | National Welfare Integrity Engine",
@@ -27,10 +23,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.variable} ${jetbrains.variable} font-sans antialiased`}>
-        <AppProvider>
-          {children}
-        </AppProvider>
+      <body className="font-sans antialiased">
+        <AppProvider>{children}</AppProvider>
         <Analytics />
       </body>
     </html>

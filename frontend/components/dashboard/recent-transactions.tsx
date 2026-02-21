@@ -2,20 +2,24 @@
 
 import { useEffect } from "react"
 import { useApp } from "@/lib/app-context"
-import { getClaims } from "@/lib/api"
+import { getClaims, mapBackendClaimToTransaction } from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { cn } from "@/lib/utils"
 
 export function RecentTransactions() {
-  const { transactions, loadDataset } = useApp()
+  const { transactions, loadDataset, mode, datasetLoaded } = useApp()
 
-  // 🔥 fetch claims
   useEffect(() => {
-    getClaims().then(data => {
-      loadDataset(data.transactions || [])
-    })
-  }, [loadDataset])
+    if (mode !== "live" || !datasetLoaded) return
+
+    getClaims()
+      .then(claims => {
+        loadDataset(claims.map(mapBackendClaimToTransaction))
+      })
+      .catch(error => {
+        console.error("Failed to fetch claims", error)
+      })
+  }, [loadDataset, mode, datasetLoaded])
 
   const recent = transactions.slice(0, 10)
 

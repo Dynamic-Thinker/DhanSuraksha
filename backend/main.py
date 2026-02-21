@@ -1,196 +1,193 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
-import pandas as pd
+from __future__ import annotations
+
 import os
 import random
+from typing import Any
 
-app = FastAPI()
+import pandas as pd
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI(title="DhanSuraksha API", version="1.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 DATA_PATH = "data/dataset.xlsx"
 
-current_df = None
-summary_cache = None
+current_df: pd.DataFrame | None = None
+summary_cache: dict[str, Any] | None = None
 
-
-# --------------------------------------------------
-# COLUMN NORMALIZATION + SMART MAPPING
-# --------------------------------------------------
 COLUMN_ALIASES = {
     "citizen id": "citizen_id",
     "citizenid": "citizen_id",
-
     "aadhaar verified": "aadhaar_verified",
     "aadhaar status": "aadhaar_verified",
-
+    "aadhaar_linked": "aadhaar_verified",
     "claim count": "claim_count",
     "claims": "claim_count",
-
     "account status": "account_status",
     "status": "account_status",
-
     "scheme amount": "scheme_amount",
-    "amount": "scheme_amount"
+    "amount": "scheme_amount",
+    "scheme eligibility": "scheme_eligibility",
 }
 
 
-def normalize_columns(df: pd.DataFrame):
-
-    df.columns = (
-        df.columns
-        .str.strip()
-        .str.lower()
-    )
-
-    # map aliases
+def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df.columns = df.columns.str.strip().str.lower()
     df.rename(columns=COLUMN_ALIASES, inplace=True)
-
-    # replace spaces after mapping
     df.columns = df.columns.str.replace(" ", "_")
-
     return df
 
 
-def clean_data(df: pd.DataFrame):
-
+def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     df = normalize_columns(df)
 
-    required = [
-        "citizen_id",
-        "aadhaar_verified",
-        "claim_count",
-        "account_status",
-        "scheme_amount"
-    ]
-
+    required = ["citizen_id", "aadhaar_verified", "claim_count", "account_status", "scheme_amount"]
     missing = [col for col in required if col not in df.columns]
 
     if missing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Missing required columns: {missing}"
-        )
+        raise HTTPException(status_code=400, detail=f"Missing required columns: {missing}")
 
     df = df.drop_duplicates(subset=["citizen_id"])
 
-    df["aadhaar_verified"] = df["aadhaar_verified"].astype(str).str.upper()
-    df["account_status"] = df["account_status"].astype(str).str.upper()
+    df["aadhaar_verified"] = df["aadhaar_verified"].astype(str).str.upper().str.strip()
+    df["account_status"] = df["account_status"].astype(str).str.upper().str.strip()
+    df["claim_count"] = pd.to_numeric(df["claim_count"], errors="coerce").fillna(0)
+    df["scheme_amount"] = pd.to_numeric(df["scheme_amount"], errors="coerce").fillna(0)
 
     return df
 
 
-# --------------------------------------------------
-# FRAUD RISK ENGINE
-# --------------------------------------------------
-def calculate_risk(row):
-
+def calculate_risk(row: pd.Series) -> int:
     risk = 0
 
     if row["claim_count"] >= 4:
         risk += 30
-
     if row["aadhaar_verified"] != "TRUE":
         risk += 40
-
     if row["account_status"] != "ACTIVE":
         risk += 20
-
     if row["scheme_amount"] >= 5000:
         risk += 10
 
     return min(risk, 100)
 
 
-# --------------------------------------------------
-# ANALYSIS
-# --------------------------------------------------
-def analyze_dataframe(df: pd.DataFrame):
+def analyze_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Any]]:
+    if df.empty:
+        return df, {
+            "summary": {
+                "total_transactions": 0,
+                "fraud_detected": 0,
+                "avg_risk_score": 0.0,
+                "ledger_integrity": 100,
+            },
+            "transactions": [],
+        }
 
     df["risk_score"] = df.apply(calculate_risk, axis=1)
-
     fraud_df = df[df["risk_score"] > 60]
 
     summary = {
         "total_transactions": int(len(df)),
         "fraud_detected": int(len(fraud_df)),
         "avg_risk_score": float(round(df["risk_score"].mean(), 2)),
-        "ledger_integrity": int(100 - (len(fraud_df) / len(df) * 100))
+        "ledger_integrity": int(100 - (len(fraud_df) / len(df) * 100)),
     }
 
     transactions = df.tail(20).to_dict(orient="records")
 
-    return df, {
-        "summary": summary,
-        "transactions": transactions
-    }
+    return df, {"summary": summary, "transactions": transactions}
 
 
-# --------------------------------------------------
-# UPLOAD ENDPOINT
-# --------------------------------------------------
+def load_dataset_from_disk(path: str = DATA_PATH) -> None:
+    global current_df, summary_cache
+
+    if not os.path.exists(path):
+        return
+
+    df = pd.read_excel(path)
+    df = clean_data(df)
+    current_df, summary_cache = analyze_dataframe(df)
+
+
+@app.on_event("startup")
+def startup_event() -> None:
+    os.makedirs("data", exist_ok=True)
+    try:
+        load_dataset_from_disk(DATA_PATH)
+    except Exception:
+        # Keep startup resilient; users can re-upload a fresh file.
+        pass
+
+
+@app.get("/health")
+def health_check() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 @app.post("/upload")
-async def upload_excel(file: UploadFile = File(...)):
+async def upload_excel(file: UploadFile = File(...)) -> dict[str, Any]:
     global current_df, summary_cache
 
     os.makedirs("data", exist_ok=True)
-
     with open(DATA_PATH, "wb") as f:
         f.write(await file.read())
 
     try:
         df = pd.read_excel(DATA_PATH)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid Excel file")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid Excel file") from exc
 
     df = clean_data(df)
-
     current_df, summary_cache = analyze_dataframe(df)
 
-    return {
-        "message": "Dataset uploaded successfully",
-        "summary": summary_cache
-    }
+    return {"message": "Dataset uploaded successfully", "summary": summary_cache}
 
 
-# --------------------------------------------------
-# DASHBOARD DATA
-# --------------------------------------------------
 @app.get("/dashboard")
-def get_dashboard():
-
+def get_dashboard() -> dict[str, Any]:
     if summary_cache is None:
         raise HTTPException(status_code=400, detail="No dataset uploaded")
-
     return summary_cache
 
 
-# --------------------------------------------------
-# CLAIMS TABLE
-# --------------------------------------------------
 @app.get("/claims")
-def get_claims():
-
+def get_claims() -> list[dict[str, Any]]:
     if current_df is None:
         raise HTTPException(status_code=400, detail="No dataset uploaded")
-
     return current_df.tail(50).to_dict(orient="records")
 
 
-# --------------------------------------------------
-# THREAT SIMULATION ROUTE (FIXES 404)
-# --------------------------------------------------
-@app.get("/simulate-attack")
-def simulate_attack():
+@app.get("/fraud-alerts")
+def get_fraud_alerts() -> dict[str, list[dict[str, Any]]]:
+    if current_df is None or "risk_score" not in current_df.columns:
+        return {"alerts": []}
 
+    alerts = current_df[current_df["risk_score"] > 70].tail(20).to_dict(orient="records")
+    return {"alerts": alerts}
+
+
+@app.get("/simulate-attack")
+def simulate_attack() -> dict[str, str]:
     threats = [
         "Duplicate beneficiary injection attempt",
         "Mass claim bot attack detected",
         "Ledger tampering attempt",
         "Fake Aadhaar batch upload",
-        "High-value scheme exploit detected"
+        "High-value scheme exploit detected",
     ]
 
     return {
         "status": "attack_detected",
         "threat": random.choice(threats),
         "severity": random.choice(["LOW", "MEDIUM", "HIGH"]),
-        "recommended_action": "Trigger audit + freeze suspicious accounts"
+        "recommended_action": "Trigger audit + freeze suspicious accounts",
     }

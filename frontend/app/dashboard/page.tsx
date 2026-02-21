@@ -1,129 +1,41 @@
 "use client"
 
-import { useState, useCallback, useEffect } from "react"
+import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useApp } from "@/lib/app-context"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Progress } from "@/components/ui/progress"
-import { Badge } from "@/components/ui/badge"
-import { Upload, FileSpreadsheet, CheckCircle2, AlertTriangle } from "lucide-react"
-import { uploadDataset } from "@/lib/api"
+import { MetricCards } from "@/components/dashboard/metric-cards"
+import { TransactionChart } from "@/components/dashboard/transaction-chart"
+import { FraudGauge } from "@/components/dashboard/fraud-gauge"
+import { RecentTransactions } from "@/components/dashboard/recent-transactions"
 
-export default function DatasetUploadPage() {
-  const { mode, loadDataset, datasetLoaded } = useApp()
+export default function CommandCenterPage() {
+  const { datasetLoaded, mode } = useApp()
   const router = useRouter()
 
-  const [isDragging, setIsDragging] = useState(false)
-  const [uploading, setUploading] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState(0)
-  const [fileName, setFileName] = useState("")
-  const [uploadComplete, setUploadComplete] = useState(false)
-
   useEffect(() => {
-    if (uploadComplete && datasetLoaded) {
-      const timer = setTimeout(() => router.push("/dashboard"), 1500)
-      return () => clearTimeout(timer)
+    if (mode === "live" && !datasetLoaded) {
+      router.replace("/dashboard/upload")
     }
-  }, [uploadComplete, datasetLoaded, router])
+  }, [mode, datasetLoaded, router])
 
-  const processFile = useCallback(
-    async (file: File) => {
-      setFileName(file.name)
-      setUploading(true)
-      setUploadProgress(20)
-
-      try {
-        // 🔥 REAL BACKEND CALL
-        const data = await uploadDataset(file)
-
-        setUploadProgress(80)
-
-        // backend returns transactions
-        loadDataset(data.transactions || [])
-
-        setUploadProgress(100)
-        setUploadComplete(true)
-      } catch (err) {
-        console.error(err)
-        alert("Upload failed. Check backend.")
-      } finally {
-        setUploading(false)
-      }
-    },
-    [loadDataset]
-  )
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault()
-      setIsDragging(false)
-      const file = e.dataTransfer.files[0]
-      if (file) processFile(file)
-    },
-    [processFile]
-  )
-
-  const handleFileInput = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0]
-      if (file) processFile(file)
-    },
-    [processFile]
-  )
-
-  if (datasetLoaded || uploadComplete) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-6 py-20">
-        <CheckCircle2 className="size-10 text-green-500" />
-        <h2 className="text-xl font-semibold">Registry Loaded Successfully</h2>
-        <p className="text-sm text-muted-foreground">{fileName}</p>
-
-        <Button onClick={() => router.push("/dashboard")}>
-          Go to Command Center
-        </Button>
-      </div>
-    )
-  }
+  if (mode === "live" && !datasetLoaded) return null
 
   return (
-    <div className="mx-auto max-w-xl py-12">
-      <Card>
-        <CardHeader>
-          <CardTitle>Upload Registry Excel</CardTitle>
-          <CardDescription>Upload .xlsx dataset</CardDescription>
-        </CardHeader>
+    <div className="flex flex-col gap-6">
+      <h2 className="text-xl font-bold">Command Center</h2>
 
-        <CardContent>
-          {!uploading ? (
-            <label
-              className={`flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed p-10 cursor-pointer ${
-                isDragging ? "border-primary bg-primary/5" : "border-border"
-              }`}
-              onDragOver={e => {
-                e.preventDefault()
-                setIsDragging(true)
-              }}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={handleDrop}
-            >
-              <Upload className="size-6" />
-              Drop Excel File
-              <input
-                type="file"
-                accept=".xlsx,.xls"
-                className="sr-only"
-                onChange={handleFileInput}
-              />
-            </label>
-          ) : (
-            <div className="py-6">
-              <FileSpreadsheet className="mx-auto size-10 text-primary" />
-              <Progress value={uploadProgress} className="mt-4" />
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <MetricCards />
+
+      <div className="grid gap-6 lg:grid-cols-5">
+        <div className="lg:col-span-3">
+          <TransactionChart />
+        </div>
+        <div className="lg:col-span-2">
+          <FraudGauge />
+        </div>
+      </div>
+
+      <RecentTransactions />
     </div>
   )
 }
