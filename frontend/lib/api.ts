@@ -31,6 +31,8 @@ export interface BackendClaim {
   Aadhaar_Verified?: string
   last_claim_date?: string
   Last_Claim_Date?: string
+  region_code?: string
+  Region_Code?: string
   [key: string]: unknown
 }
 
@@ -81,19 +83,40 @@ export async function registerOfficer(data: {
   })
 }
 
+function parseClaimDate(raw: string): string {
+  const value = raw.trim()
+  if (!value) return new Date().toISOString()
+
+  const asNativeDate = new Date(value)
+  if (!Number.isNaN(asNativeDate.getTime())) return asNativeDate.toISOString()
+
+  const dmyMatch = value.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/)
+  if (dmyMatch) {
+    const day = Number(dmyMatch[1])
+    const month = Number(dmyMatch[2])
+    const year = Number(dmyMatch[3].length === 2 ? `20${dmyMatch[3]}` : dmyMatch[3])
+    const parsed = new Date(Date.UTC(year, month - 1, day))
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString()
+  }
+
+  return new Date().toISOString()
+}
+
 export function mapBackendClaimToTransaction(claim: BackendClaim, index: number) {
   const citizenId = (claim.citizen_id ?? claim.Citizen_ID ?? `CIT-${index + 1}`).toString()
   const amount = Number(claim.scheme_amount ?? claim.Scheme_Amount ?? 0)
   const riskScore = Number(claim.risk_score ?? claim.Risk_Score ?? 0)
   const accountStatus = String(claim.account_status ?? claim.Account_Status ?? "").toUpperCase()
   const scheme = String(claim.scheme_eligibility ?? claim.Scheme_Eligibility ?? "Welfare Scheme")
+  const regionCode = String(claim.region_code ?? claim.Region_Code ?? "UNKNOWN").toUpperCase()
   const rawTimestamp = String(claim.last_claim_date ?? claim.Last_Claim_Date ?? "")
-  const timestamp = Number.isNaN(Date.parse(rawTimestamp)) ? new Date().toISOString() : new Date(rawTimestamp).toISOString()
+  const timestamp = parseClaimDate(rawTimestamp)
 
   return {
     id: `TXN-${String(index + 1).padStart(4, "0")}`,
     citizenHash: citizenId,
     scheme,
+    regionCode,
     amount: Number.isFinite(amount) ? amount : 0,
     riskScore: Number.isFinite(riskScore) ? riskScore : 0,
     timestamp,

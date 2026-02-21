@@ -13,6 +13,8 @@ import {
   Play,
   Pause,
   Lock,
+  Network,
+  FileWarning,
 } from "lucide-react"
 
 export default function AdminPanelPage() {
@@ -25,6 +27,8 @@ export default function AdminPanelPage() {
     fraudAttemptsBlocked,
     ledgerIntegrity,
     transactions,
+    fraudClusters,
+    freezeClusterClaims,
   } = useApp()
 
   const schemes = [...new Set(transactions.map(t => t.scheme))]
@@ -139,6 +143,50 @@ export default function AdminPanelPage() {
               Freeze System
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+
+      <Card className="border-border">
+        <CardHeader>
+          <CardTitle className="text-sm font-medium text-foreground flex items-center gap-2">
+            <Network className="size-4" />
+            Cross-Region Duplicate Identity Ring
+          </CardTitle>
+          <CardDescription>
+            Auto-flags citizen IDs appearing in more than one region code and pauses linked transactions.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-sm text-muted-foreground">
+              Active fraud clusters: <span className="font-mono text-foreground">{fraudClusters.length}</span>
+            </div>
+            <Button size="sm" variant="outline" onClick={freezeClusterClaims} className="gap-1.5">
+              <FileWarning className="size-3.5" />
+              Freeze Linked Claims
+            </Button>
+          </div>
+
+          {fraudClusters.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No cross-region duplicate clusters detected.</p>
+          ) : (
+            <div className="space-y-2">
+              {fraudClusters.map(cluster => (
+                <div key={cluster.citizenHash} className="rounded-md border border-warning/30 bg-warning/5 p-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-mono text-xs text-foreground">{cluster.citizenHash}</span>
+                    <Badge variant="outline" className="border-warning/40 text-warning">
+                      {cluster.claimCount} linked claims paused
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Regions: {cluster.regions.join(", ")} | Cluster status: AUTO-FLAGGED
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 

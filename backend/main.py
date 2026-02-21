@@ -62,7 +62,9 @@ COLUMN_ALIASES = {
     "scheme amount": "scheme_amount",
     "amount": "scheme_amount",
     "scheme eligibility": "scheme_eligibility",
+    "region code": "region_code",
 }
+
 
 
 def get_db_connection() -> sqlite3.Connection:
@@ -347,7 +349,7 @@ def get_dashboard() -> dict[str, Any]:
 def get_claims() -> list[dict[str, Any]]:
     if current_df is None:
         raise HTTPException(status_code=400, detail="No dataset uploaded")
-    return current_df.tail(50).to_dict(orient="records")
+    return current_df.to_dict(orient="records")
 
 
 @app.get("/fraud-alerts")

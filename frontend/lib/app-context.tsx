@@ -18,6 +18,7 @@ export interface Transaction {
   id: string
   citizenHash: string
   scheme: string
+  regionCode: string
   amount: number
   riskScore: number
   timestamp: string
@@ -25,6 +26,13 @@ export interface Transaction {
   aiExplanation: string
   previousHash: string
   currentHash: string
+  clusterFlag?: boolean
+}
+
+export interface FraudCluster {
+  citizenHash: string
+  regions: string[]
+  claimCount: number
 }
 
 export interface AppState {
@@ -40,6 +48,7 @@ export interface AppState {
   averageRiskScore: number
   isUnderAttack: boolean
   hydrated: boolean
+  fraudClusters: FraudCluster[]
 }
 
 interface AppContextType extends AppState {
@@ -51,6 +60,7 @@ interface AppContextType extends AppState {
   simulateAttack: () => void
   recoverSystem: () => void
   setSystemStatus: (status: SystemStatus) => void
+  freezeClusterClaims: () => void
 }
 
 // ─── localStorage helpers ───────────────────────────────────────────────────
@@ -132,6 +142,7 @@ function generateDemoTransactions(): Transaction[] {
       id: `TXN-${String(i + 1).padStart(4, "0")}`,
       citizenHash: `CIT-${generateHash().slice(0, 8).toUpperCase()}`,
       scheme: SCHEMES[Math.floor(Math.random() * SCHEMES.length)],
+      regionCode: `RG-${String(Math.floor(Math.random() * 12) + 1).padStart(2, "0")}`,
       amount: Math.floor(Math.random() * 45000) + 5000,
       riskScore,
       timestamp: new Date(
@@ -166,6 +177,39 @@ function generateDemoTransactions(): Transaction[] {
   return txns.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
 }
 
+function detectCrossRegionClusters(data: Transaction[]): FraudCluster[] {
+  const byCitizen = new Map<string, { regions: Set<string>; count: number }>()
+
+  data.forEach(txn => {
+    const key = txn.citizenHash
+    const entry = byCitizen.get(key) ?? { regions: new Set<string>(), count: 0 }
+    entry.regions.add((txn.regionCode || "UNKNOWN").toUpperCase())
+    entry.count += 1
+    byCitizen.set(key, entry)
+  })
+
+  return Array.from(byCitizen.entries())
+    .filter(([, value]) => value.regions.size > 1)
+    .map(([citizenHash, value]) => ({ citizenHash, regions: Array.from(value.regions), claimCount: value.count }))
+}
+
+function applyCrossRegionRingRule(data: Transaction[]): { transactions: Transaction[]; clusters: FraudCluster[] } {
+  const clusters = detectCrossRegionClusters(data)
+  const flagged = new Set(clusters.map(c => c.citizenHash))
+
+  const transactions = data.map((txn): Transaction => {
+    if (!flagged.has(txn.citizenHash)) return { ...txn, clusterFlag: false }
+    return {
+      ...txn,
+      status: "pending",
+      clusterFlag: true,
+      aiExplanation: `${txn.aiExplanation} | Cross-region duplicate identity ring detected; transactions paused for manual audit.`,
+    }
+  })
+
+  return { transactions, clusters }
+}
+
 // ─── Context ─────────────────────────────────────────────────────────────────
 const AppContext = createContext<AppContextType | undefined>(undefined)
 
@@ -179,6 +223,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [ledgerIntegrity, setLedgerIntegrity] = useState(99.7)
   const [isUnderAttack, setIsUnderAttack] = useState(false)
+  const [fraudClusters, setFraudClusters] = useState<FraudCluster[]>([])
   const skipPersist = useRef(false)
 
   // ── Hydrate from localStorage on mount ──
@@ -196,10 +241,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       // Re-generate transactions for demo mode (not persisted due to size)
       if (saved.datasetLoaded && saved.mode === "demo") {
-        setTransactions(generateDemoTransactions())
-      }
-      // For live mode with datasetLoaded, generate simulated data too
-      if (saved.datasetLoaded && saved.mode === "live") {
         setTransactions(generateDemoTransactions())
       }
 
@@ -266,16 +307,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setLedgerIntegrity(99.7)
     setIsUnderAttack(false)
     setSystemStatus("ACTIVE")
+    setFraudClusters([])
     clearPersistedState()
   }, [])
 
   const setMode = useCallback((m: AppMode) => {
     setModeState(m)
     if (m === "demo") {
-      setTransactions(generateDemoTransactions())
+      const ruled = applyCrossRegionRingRule(generateDemoTransactions())
+      setTransactions(ruled.transactions)
+      setFraudClusters(ruled.clusters)
       setDatasetLoaded(true)
     } else {
       setTransactions([])
+      setFraudClusters([])
       setDatasetLoaded(false)
     }
     setLedgerIntegrity(99.7)
@@ -284,9 +329,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const loadDataset = useCallback((data: Transaction[]) => {
-    setTransactions(data)
+    const ruled = applyCrossRegionRingRule(data)
+    setTransactions(ruled.transactions)
+    setFraudClusters(ruled.clusters)
     setDatasetLoaded(true)
+
+    if (ruled.clusters.length > 0) {
+      setSystemStatus("PAUSED")
+    }
   }, [])
+
+  const freezeClusterClaims = useCallback(() => {
+    const clusterCitizens = new Set(fraudClusters.map(cluster => cluster.citizenHash))
+    if (clusterCitizens.size === 0) return
+
+    setTransactions(prev =>
+      prev.map(txn =>
+        clusterCitizens.has(txn.citizenHash)
+          ? { ...txn, status: "pending", clusterFlag: true }
+          : txn
+      )
+    )
+    setSystemStatus("PAUSED")
+  }, [fraudClusters])
 
   const simulateAttack = useCallback(() => {
     setIsUnderAttack(true)
@@ -335,6 +400,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         averageRiskScore,
         isUnderAttack,
         hydrated,
+        fraudClusters,
         login,
         register,
         logout,
@@ -343,6 +409,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         simulateAttack,
         recoverSystem,
         setSystemStatus,
+        freezeClusterClaims,
       }}
     >
       {children}
