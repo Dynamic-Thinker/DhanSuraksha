@@ -9,8 +9,8 @@ import { ArrowRight, AlertTriangle, Lock } from "lucide-react"
 export default function LedgerExplorerPage() {
   const { transactions, ledgerIntegrity, isUnderAttack } = useApp()
 
-  // Take a subset for the chain view
-  const chain = transactions.slice(0, 15)
+  // Show complete dataset chain
+  const chain = transactions
 
   return (
     <div className="flex flex-col gap-6">
@@ -18,7 +18,7 @@ export default function LedgerExplorerPage() {
         <div>
           <h2 className="text-xl font-bold text-foreground">Ledger Explorer</h2>
           <p className="text-sm text-muted-foreground">
-            Blockchain-style ledger chain visualization
+            Blockchain-style ledger chain visualization across all uploaded records
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -42,6 +42,8 @@ export default function LedgerExplorerPage() {
           )}
         </div>
       </div>
+
+      <p className="text-xs text-muted-foreground">Total blocks: {chain.length}</p>
 
       {/* Chain visualization */}
       <div className="flex flex-col gap-0">

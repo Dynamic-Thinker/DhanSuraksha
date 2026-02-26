@@ -62,7 +62,9 @@ COLUMN_ALIASES = {
     "scheme amount": "scheme_amount",
     "amount": "scheme_amount",
     "scheme eligibility": "scheme_eligibility",
+    "region code": "region_code",
 }
+
 
 
 def get_db_connection() -> sqlite3.Connection:
@@ -263,6 +265,58 @@ def login_officer(payload: LoginRequest) -> dict[str, Any]:
     }
 
 
+def parse_uploaded_dataset(file_bytes: bytes, filename: str | None) -> pd.DataFrame:
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    suffix = Path(filename or "").suffix.lower()
+
+    # 1) Try Excel auto-detection first (handles modern .xlsx and some legacy files).
+    try:
+        return pd.read_excel(BytesIO(file_bytes))
+    except Exception:
+        pass
+
+    # 2) Explicit engines for known spreadsheet formats.
+    if suffix in {".xlsx", ".xlsm", ".xltx", ".xltm", ""}:
+        try:
+            return pd.read_excel(BytesIO(file_bytes), engine="openpyxl")
+        except Exception:
+            pass
+
+    if suffix == ".xls":
+        try:
+            return pd.read_excel(BytesIO(file_bytes), engine="xlrd")
+        except ImportError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail="Legacy .xls upload requires xlrd. Install backend dependencies from requirements.txt.",
+            ) from exc
+        except Exception:
+            pass
+
+    # 3) Fallback to CSV parsing with delimiter + encoding tolerance.
+    csv_attempts: list[dict[str, Any]] = [
+        {"encoding": "utf-8-sig", "sep": None, "engine": "python"},
+        {"encoding": "utf-8", "sep": None, "engine": "python"},
+        {"encoding": "latin1", "sep": None, "engine": "python"},
+        {"encoding": "utf-8-sig", "sep": ",", "engine": "python"},
+        {"encoding": "utf-8-sig", "sep": ";", "engine": "python"},
+        {"encoding": "utf-8-sig", "sep": "	", "engine": "python"},
+    ]
+
+    for kwargs in csv_attempts:
+        try:
+            return pd.read_csv(BytesIO(file_bytes), **kwargs)
+        except Exception:
+            continue
+
+    raise HTTPException(
+        status_code=400,
+        detail="Unable to parse uploaded file. Supported formats: .xlsx, .xls, .csv (comma/semicolon/tab delimited).",
+    )
+
+
 @app.post("/upload")
 async def upload_excel(file: UploadFile = File(...)) -> dict[str, Any]:
     global current_df, summary_cache
@@ -270,11 +324,7 @@ async def upload_excel(file: UploadFile = File(...)) -> dict[str, Any]:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     file_bytes = await file.read()
 
-    try:
-        df = pd.read_excel(BytesIO(file_bytes))
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail="Invalid Excel file") from exc
-
+    df = parse_uploaded_dataset(file_bytes, file.filename)
     df = clean_data(df)
     current_df, summary_cache = analyze_dataframe(df)
 
@@ -299,7 +349,7 @@ def get_dashboard() -> dict[str, Any]:
 def get_claims() -> list[dict[str, Any]]:
     if current_df is None:
         raise HTTPException(status_code=400, detail="No dataset uploaded")
-    return current_df.tail(50).to_dict(orient="records")
+    return current_df.to_dict(orient="records")
 
 
 @app.get("/fraud-alerts")

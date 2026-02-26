@@ -17,20 +17,28 @@ export function TransactionChart() {
   const { transactions } = useApp()
 
   const chartData = useMemo(() => {
-    const grouped: Record<string, { approved: number; blocked: number; pending: number }> = {}
+    const grouped = new Map<string, { approved: number; blocked: number; pending: number }>()
 
     transactions.forEach(t => {
-      const date = new Date(t.timestamp).toLocaleDateString("en-IN", {
-        day: "2-digit",
-        month: "short",
-      })
-      if (!grouped[date]) grouped[date] = { approved: 0, blocked: 0, pending: 0 }
-      grouped[date][t.status]++
+      const dateObj = new Date(t.timestamp)
+      if (Number.isNaN(dateObj.getTime())) return
+
+      const dateKey = dateObj.toISOString().slice(0, 10)
+      const entry = grouped.get(dateKey) ?? { approved: 0, blocked: 0, pending: 0 }
+      entry[t.status] += 1
+      grouped.set(dateKey, entry)
     })
 
-    return Object.entries(grouped)
-      .map(([date, counts]) => ({ date, ...counts }))
+    return Array.from(grouped.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
       .slice(-10)
+      .map(([dateKey, counts]) => ({
+        date: new Date(`${dateKey}T00:00:00Z`).toLocaleDateString("en-IN", {
+          day: "2-digit",
+          month: "short",
+        }),
+        ...counts,
+      }))
   }, [transactions])
 
   return (

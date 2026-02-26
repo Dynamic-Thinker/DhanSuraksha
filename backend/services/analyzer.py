@@ -7,14 +7,15 @@ import pandas as pd
 def compute_fraud_score(row):
     score = 0
 
-    if row.get("aadhaar_verified") != "YES":
+    aadhaar_value = str(row.get("aadhaar_verified", "")).strip().upper()
+    if aadhaar_value not in {"YES", "TRUE"}:
         score += 40
 
     if row.get("duplicate_flag"):
         score += 40
 
-    amount = row.get("amount", 0)
-    if amount > 50000:
+    amount = pd.to_numeric(row.get("amount", row.get("scheme_amount", 0)), errors="coerce")
+    if pd.notna(amount) and float(amount) > 50000:
         score += 20
 
     return min(score, 100)
@@ -42,13 +43,18 @@ def analyze_dataframe(df: pd.DataFrame):
     df["risk_level"] = df["fraud_score"].apply(risk_label)
 
     # ---------- SUMMARY ----------
+    if df.empty:
+        avg_fraud_score = 0.0
+    else:
+        avg_fraud_score = float(df["fraud_score"].mean())
+
     summary = {
         "total_records": int(len(df)),
         "duplicates": int(df["duplicate_flag"].sum()),
         "high_risk": int((df["risk_level"] == "HIGH").sum()),
         "medium_risk": int((df["risk_level"] == "MEDIUM").sum()),
         "low_risk": int((df["risk_level"] == "LOW").sum()),
-        "avg_fraud_score": float(df["fraud_score"].mean()),
+        "avg_fraud_score": avg_fraud_score,
     }
 
     # ---------- RECENT TRANSACTIONS ----------

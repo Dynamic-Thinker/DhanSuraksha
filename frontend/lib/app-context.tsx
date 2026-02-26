@@ -18,6 +18,8 @@ export interface Transaction {
   id: string
   citizenHash: string
   scheme: string
+  regionCode: string
+  incomeTier: "LOW" | "MEDIUM" | "HIGH"
   amount: number
   riskScore: number
   timestamp: string
@@ -25,6 +27,13 @@ export interface Transaction {
   aiExplanation: string
   previousHash: string
   currentHash: string
+  clusterFlag?: boolean
+}
+
+export interface FraudCluster {
+  citizenHash: string
+  regions: string[]
+  claimCount: number
 }
 
 export interface AppState {
@@ -40,6 +49,8 @@ export interface AppState {
   averageRiskScore: number
   isUnderAttack: boolean
   hydrated: boolean
+  fraudClusters: FraudCluster[]
+  remainingBudget: number
 }
 
 interface AppContextType extends AppState {
@@ -51,6 +62,10 @@ interface AppContextType extends AppState {
   simulateAttack: () => void
   recoverSystem: () => void
   setSystemStatus: (status: SystemStatus) => void
+  freezeClusterClaims: () => void
+  updateRemainingBudgetDeterministically: (budget: number) => void
+  submitCitizenFundRequest: (input: { citizenId: string; amount: number; scheme: string; regionCode: string; incomeTier: "LOW" | "MEDIUM" | "HIGH" }) => void
+  recalculateCitizenEligibility: (citizenId: string) => void
 }
 
 // ─── localStorage helpers ───────────────────────────────────────────────────
@@ -132,6 +147,8 @@ function generateDemoTransactions(): Transaction[] {
       id: `TXN-${String(i + 1).padStart(4, "0")}`,
       citizenHash: `CIT-${generateHash().slice(0, 8).toUpperCase()}`,
       scheme: SCHEMES[Math.floor(Math.random() * SCHEMES.length)],
+      regionCode: `RG-${String(Math.floor(Math.random() * 12) + 1).padStart(2, "0")}`,
+      incomeTier: (["LOW", "MEDIUM", "HIGH"] as const)[Math.floor(Math.random() * 3)],
       amount: Math.floor(Math.random() * 45000) + 5000,
       riskScore,
       timestamp: new Date(
@@ -166,6 +183,81 @@ function generateDemoTransactions(): Transaction[] {
   return txns.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
 }
 
+function detectCrossRegionClusters(data: Transaction[]): FraudCluster[] {
+  const byCitizen = new Map<string, { regions: Set<string>; count: number }>()
+
+  data.forEach(txn => {
+    const key = txn.citizenHash
+    const entry = byCitizen.get(key) ?? { regions: new Set<string>(), count: 0 }
+    entry.regions.add((txn.regionCode || "UNKNOWN").toUpperCase())
+    entry.count += 1
+    byCitizen.set(key, entry)
+  })
+
+  return Array.from(byCitizen.entries())
+    .filter(([, value]) => value.regions.size > 1)
+    .map(([citizenHash, value]) => ({ citizenHash, regions: Array.from(value.regions), claimCount: value.count }))
+}
+
+function applyCrossRegionRingRule(data: Transaction[]): { transactions: Transaction[]; clusters: FraudCluster[] } {
+  const clusters = detectCrossRegionClusters(data)
+  const flagged = new Set(clusters.map(c => c.citizenHash))
+
+  const transactions = data.map((txn): Transaction => {
+    if (!flagged.has(txn.citizenHash)) return { ...txn, clusterFlag: false }
+    return {
+      ...txn,
+      status: "pending",
+      clusterFlag: true,
+      aiExplanation: `${txn.aiExplanation} | Cross-region duplicate identity ring detected; transactions paused for manual audit.`,
+    }
+  })
+
+  return { transactions, clusters }
+}
+
+
+const INCOME_RANK: Record<"LOW" | "MEDIUM" | "HIGH", number> = {
+  LOW: 0,
+  MEDIUM: 1,
+  HIGH: 2,
+}
+
+function applyDeterministicBudgetRule(data: Transaction[], budget: number): { transactions: Transaction[]; remainingBudget: number } {
+  const prioritized = data
+    .map((txn, idx) => ({ txn, idx }))
+    .sort((a, b) => {
+      const byTier = INCOME_RANK[a.txn.incomeTier] - INCOME_RANK[b.txn.incomeTier]
+      if (byTier !== 0) return byTier
+      return new Date(a.txn.timestamp).getTime() - new Date(b.txn.timestamp).getTime()
+    })
+
+  let remaining = Math.max(0, Number.isFinite(budget) ? budget : 0)
+  const updates = new Map<number, Transaction>()
+
+  prioritized.forEach(({ txn, idx }) => {
+    if (txn.status === "blocked") {
+      updates.set(idx, txn)
+      return
+    }
+
+    if (remaining >= txn.amount) {
+      remaining -= txn.amount
+      updates.set(idx, { ...txn, status: "approved" })
+      return
+    }
+
+    updates.set(idx, {
+      ...txn,
+      status: "blocked",
+      aiExplanation: `${txn.aiExplanation} | Rejected by deterministic budget rule: lower income tiers prioritized under constrained budget.`,
+    })
+  })
+
+  const transactions = data.map((txn, idx) => updates.get(idx) ?? txn)
+  return { transactions, remainingBudget: remaining }
+}
+
 // ─── Context ─────────────────────────────────────────────────────────────────
 const AppContext = createContext<AppContextType | undefined>(undefined)
 
@@ -179,6 +271,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [ledgerIntegrity, setLedgerIntegrity] = useState(99.7)
   const [isUnderAttack, setIsUnderAttack] = useState(false)
+  const [fraudClusters, setFraudClusters] = useState<FraudCluster[]>([])
+  const [remainingBudget, setRemainingBudget] = useState(0)
   const skipPersist = useRef(false)
 
   // ── Hydrate from localStorage on mount ──
@@ -196,10 +290,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       // Re-generate transactions for demo mode (not persisted due to size)
       if (saved.datasetLoaded && saved.mode === "demo") {
-        setTransactions(generateDemoTransactions())
-      }
-      // For live mode with datasetLoaded, generate simulated data too
-      if (saved.datasetLoaded && saved.mode === "live") {
         setTransactions(generateDemoTransactions())
       }
 
@@ -266,17 +356,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setLedgerIntegrity(99.7)
     setIsUnderAttack(false)
     setSystemStatus("ACTIVE")
+    setFraudClusters([])
+    setRemainingBudget(0)
     clearPersistedState()
   }, [])
 
   const setMode = useCallback((m: AppMode) => {
     setModeState(m)
     if (m === "demo") {
-      setTransactions(generateDemoTransactions())
+      const ruled = applyCrossRegionRingRule(generateDemoTransactions())
+      setTransactions(ruled.transactions)
+      setFraudClusters(ruled.clusters)
       setDatasetLoaded(true)
+      setRemainingBudget(0)
     } else {
       setTransactions([])
+      setFraudClusters([])
       setDatasetLoaded(false)
+      setRemainingBudget(0)
     }
     setLedgerIntegrity(99.7)
     setIsUnderAttack(false)
@@ -284,9 +381,71 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const loadDataset = useCallback((data: Transaction[]) => {
-    setTransactions(data)
+    const ruled = applyCrossRegionRingRule(data)
+    setTransactions(ruled.transactions)
+    setFraudClusters(ruled.clusters)
     setDatasetLoaded(true)
+    setRemainingBudget(0)
+
+    if (ruled.clusters.length > 0) {
+      setSystemStatus("PAUSED")
+    }
   }, [])
+
+  const freezeClusterClaims = useCallback(() => {
+    const clusterCitizens = new Set(fraudClusters.map(cluster => cluster.citizenHash))
+    if (clusterCitizens.size === 0) return
+
+    setTransactions(prev =>
+      prev.map(txn =>
+        clusterCitizens.has(txn.citizenHash)
+          ? { ...txn, status: "pending", clusterFlag: true }
+          : txn
+      )
+    )
+    setSystemStatus("PAUSED")
+  }, [fraudClusters])
+
+  const updateRemainingBudgetDeterministically = useCallback((budget: number) => {
+    const ruled = applyDeterministicBudgetRule(transactions, budget)
+    setTransactions(ruled.transactions)
+    setRemainingBudget(ruled.remainingBudget)
+  }, [transactions])
+
+  const submitCitizenFundRequest = useCallback((input: {
+    citizenId: string
+    amount: number
+    scheme: string
+    regionCode: string
+    incomeTier: "LOW" | "MEDIUM" | "HIGH"
+  }) => {
+    const currentHash = generateHash()
+    const previousHash = transactions.length > 0 ? transactions[transactions.length - 1].currentHash : "GENESIS"
+    const newTxn: Transaction = {
+      id: `TXN-${String(transactions.length + 1).padStart(4, "0")}`,
+      citizenHash: input.citizenId,
+      scheme: input.scheme,
+      regionCode: input.regionCode.toUpperCase(),
+      incomeTier: input.incomeTier,
+      amount: input.amount,
+      riskScore: 25,
+      timestamp: new Date().toISOString(),
+      status: "pending",
+      aiExplanation: "Citizen-initiated fund request submitted for eligibility review",
+      previousHash,
+      currentHash,
+    }
+    setTransactions(prev => [...prev, newTxn])
+  }, [transactions])
+
+  const recalculateCitizenEligibility = useCallback((citizenId: string) => {
+    const citizenTxns = transactions.filter(t => t.citizenHash === citizenId)
+    const requiredTotal = citizenTxns.filter(t => t.status !== "blocked").reduce((sum, t) => sum + t.amount, 0)
+    const budget = remainingBudget > 0 ? remainingBudget : requiredTotal
+    const ruled = applyDeterministicBudgetRule(transactions, budget)
+    setTransactions(ruled.transactions)
+    setRemainingBudget(ruled.remainingBudget)
+  }, [transactions, remainingBudget])
 
   const simulateAttack = useCallback(() => {
     setIsUnderAttack(true)
@@ -335,6 +494,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         averageRiskScore,
         isUnderAttack,
         hydrated,
+        fraudClusters,
+        remainingBudget,
         login,
         register,
         logout,
@@ -343,6 +504,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         simulateAttack,
         recoverSystem,
         setSystemStatus,
+        freezeClusterClaims,
+        updateRemainingBudgetDeterministically,
+        submitCitizenFundRequest,
+        recalculateCitizenEligibility,
       }}
     >
       {children}
